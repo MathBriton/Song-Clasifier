@@ -1,0 +1,43 @@
+<?php
+
+namespace App\Application\DTOs;
+
+final readonly class CriarMusicaDTO
+{
+    public function __construct(
+        public string $titulo,
+        public string $artista,
+        public string $youtubeUrl,
+        public int $visualizacoes,
+        public string $thumbnailUrl,
+        public int $duracao,
+        public ?int $userId = null
+    ) {}
+
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            titulo: $data['titulo'] ?? '',
+            artista: $data['artista'] ?? 'Tião Carreiro & Pardinho',
+            youtubeUrl: $data['youtube_url'] ?? '',
+            visualizacoes: (int) ($data['visualizacoes'] ?? 0),
+            thumbnailUrl: $data['thumbnail_url'] ?? '',
+            duracao: (int) ($data['duracao'] ?? 0),
+            userId: $data['user_id'] ?? null
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'titulo' => $this->titulo,
+            'artista' => $this->artista,
+            'youtube_url' => $this->youtubeUrl,
+            'visualizacoes' => $this->visualizacoes,
+            'thumbnail_url' => $this->thumbnailUrl,
+            'duracao' => $this->duracao,
+            'user_id' => $this->userId,
+        ];
+    }
+}
+
