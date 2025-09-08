@@ -1,0 +1,313 @@
+<?php
+
+namespace App\Http\Controllers\Api\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\ValueObjects\MusicaStatus;
+use App\Services\MusicaService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+
+class AdminMusicaController extends Controller
+{
+    public function __construct(
+        private MusicaService $musicaService
+    ) {
+        // $this->middleware('auth');
+        // $this->middleware('admin');
+    }
+
+    /**
+     * Listar todas as músicas (incluindo pendentes/reprovadas)
+     * GET /api/admin/musicas
+     */
+    public function index(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'page' => 'integer|min:1',
+                'per_page' => 'integer|min:1|max:100',
+                'status' => 'string|in:pendente,aprovada,reprovada',
+                'search' => 'string|max:255',
+                'order_by' => 'string|in:titulo,artista,visualizacoes,created_at,status',
+                'order_direction' => 'string|in:asc,desc'
+            ]);
+
+            $result = $this->musicaService->listarMusicasPaginadas(
+                page: $validated['page'] ?? 1,
+                perPage: $validated['per_page'] ?? 15,
+                status: $validated['status'] ?? null,
+                search: $validated['search'] ?? null,
+                orderBy: $validated['order_by'] ?? 'created_at',
+                orderDirection: $validated['order_direction'] ?? 'desc'
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $result['data'],
+                'pagination' => $result['pagination']
+            ]);
+        } catch (ValidationException $e) {
+            return $this->handleValidationException($e);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                'Erro ao listar músicas',
+                $e,
+                ['request' => $request->all()]
+            );
+        }
+    }
+
+    /**
+     * Aprovar música
+     * POST /api/admin/musicas/{id}/aprovar
+     */
+    public function aprovar(int $id): JsonResponse
+    {
+        return $this->processMusicaAction(
+            fn() => $this->musicaService->aprovar($id),
+            'Música aprovada',
+            'Música aprovada com sucesso',
+            'aprovar música',
+            $id
+        );
+    }
+
+    /**
+     * Reprovar música
+     * POST /api/admin/musicas/{id}/reprovar
+     */
+    public function reprovar(int $id): JsonResponse
+    {
+        return $this->processMusicaAction(
+            fn() => $this->musicaService->reprovar($id),
+            'Música reprovada',
+            'Música reprovada com sucesso',
+            'reprovar música',
+            $id
+        );
+    }
+
+    /**
+     * Excluir música (Admin)
+     * DELETE /api/admin/musicas/{id}
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        return $this->processMusicaAction(
+            fn() => $this->musicaService->excluirMusica($id),
+            'Música excluída',
+            'Música excluída com sucesso',
+            'excluir música',
+            $id
+        );
+    }
+
+    /**
+     * Atualizar visualizações manualmente
+     * PUT /api/admin/musicas/{id}/visualizacoes
+     */
+    public function atualizarVisualizacoes(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'visualizacoes' => 'required|integer|min:0'
+            ]);
+
+            $musica = $this->musicaService->atualizarMusica($id, [
+                'visualizacoes' => $validated['visualizacoes']
+            ]);
+
+            Log::info('Admin: Visualizações atualizadas', [
+                'musica_id' => $id,
+                'visualizacoes' => $validated['visualizacoes'],
+                // 'admin_user_id' => auth()->id()
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Visualizações atualizadas com sucesso',
+                'data' => $musica->toArray()
+            ]);
+        } catch (ValidationException $e) {
+            return $this->handleValidationException($e);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                'Erro ao atualizar visualizações',
+                $e,
+                ['id' => $id, 'request' => $request->all()]
+            );
+        }
+    }
+
+    /**
+     * Atualizar música (Admin) - permite editar qualquer campo
+     * PUT /api/admin/musicas/{id}
+     */
+    public function update(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'titulo' => 'string|max:255',
+                'artista' => 'string|max:255',
+                'youtube_url' => 'url',
+                'visualizacoes' => 'integer|min:0',
+                'thumbnail_url' => 'url|max:500',
+                'duracao' => 'integer|min:0'
+            ]);
+            $musica = $this->musicaService->atualizarMusica($id, $validated);
+
+            Log::info('Admin: Música atualizada', [
+                'musica_id' => $id,
+                'changes' => $validated,
+                // 'admin_user_id' => auth()->id()
+            ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Música atualizada com sucesso',
+                'data' => $musica->toArray()
+            ]);
+        } catch (ValidationException $e) {
+            return $this->handleValidationException($e);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                'Erro ao atualizar música',
+                $e,
+                ['id' => $id, 'request' => $request->all()]
+            );
+        }
+    }
+
+    /**
+     * Estatísticas do dashboard
+     * GET /api/admin/estatisticas
+     */
+    public function estatisticas(): JsonResponse
+    {
+        try {
+            $estatisticas = $this->musicaService->getEstatisticas();
+            return response()->json([
+                'success' => true,
+                'data' => $estatisticas
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                'Erro ao buscar estatísticas',
+                $e
+            );
+        }
+    }
+
+    /*
+     * MÉTODOS COMENTADOS PORQUE O MusicaService NÃO POSSUI O MÉTODO `contarPorStatus`.
+     * Se você precisar dessa funcionalidade, adicione `public function contarPorStatus(?string $status = null): array;`
+     * à interface `MusicaRepositoryInterface` e implemente a lógica no repositório.
+     */
+    /*
+    public function contarPorStatus(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'status' => 'string|in:pendente,aprovada,reprovada'
+            ]);
+            $count = $this->musicaService->contarPorStatus(
+                $validated['status'] ?? null
+            );
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'count' => $count,
+                    'status' => $validated['status'] ?? 'todas'
+                ]
+            ]);
+        } catch (ValidationException $e) {
+            return $this->handleValidationException($e);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                'Erro ao contar músicas',
+                $e,
+                ['request' => $request->all()]
+            );
+        }
+    }
+    */
+
+    /**
+     * Handle common logic for musica actions (approve, disapprove, delete)
+     */
+    private function processMusicaAction(
+        callable $action,
+        string $logMessage,
+        string $successMessage,
+        string $errorMessageContext,
+        int $id
+    ): JsonResponse {
+        try {
+            $success = $action();
+            if ($success) {
+                Log::info("Admin: {$logMessage}", [
+                    'musica_id' => $id,
+                    // 'admin_user_id' => auth()->id()
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => "{$successMessage} com sucesso"
+                ]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => "Não foi possível {$errorMessageContext}"
+            ], 500);
+        } catch (\Exception $e) {
+            return $this->handleGeneralException(
+                "Erro ao {$errorMessageContext}",
+                $e,
+                ['id' => $id]
+            );
+        }
+    }
+
+    /**
+     * Handle common ValidationException.
+     */
+    private function handleValidationException(ValidationException $e): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Dados inválidos',
+            'errors' => $e->errors()
+        ], 422);
+    }
+
+    /**
+     * Handle common \Exception and log.
+     */
+    private function handleGeneralException(string $context, \Exception $e, array $extraData = []): JsonResponse
+    {
+        if (str_contains($e->getMessage(), 'não encontrada')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Música não encontrada'
+            ], 404);
+        }
+
+        if (str_contains($e->getMessage(), 'já existe')) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 409);
+        }
+
+        Log::error("Admin: {$context}", array_merge([
+            'error' => $e->getMessage(),
+            // 'admin_user_id' => auth()->id()
+        ], $extraData));
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erro interno do servidor'
+        ], 500);
+    }
+}
